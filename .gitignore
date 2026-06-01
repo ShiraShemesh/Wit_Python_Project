@@ -1,0 +1,7 @@
+.wit/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.idea/
+codeguard_report.zip

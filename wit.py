@@ -11,13 +11,14 @@ def init():
     logic.init()
 
 @cli.command()
-@click.argument('path')
-def add(path):
-    """אחראי על הוספת קבצים ל-staging"""
-    logic.add(path)
+@click.argument('paths', nargs=-1, required=True)
+def add(paths):
+    """אחראי על יצירת שליחת הקבצים ל STAGING"""
+    for path in paths:
+        logic.add(path)
 
 @cli.command()
-@click.option('-m', '--message', required=False,default="No message provided", help='Commit message')
+@click.option('-m', '--message', required=False, default="No message provided", help='Commit message')
 def commit(message):
     """אחראי על יצירת נקודת שמירה (קומיט)"""
     logic.commit(message)
@@ -32,6 +33,10 @@ def status():
 def checkout(commit_id):
     """אחראי על שחזור גרסה קודמת"""
     logic.checkout(commit_id)
+
+@cli.command()
+def push():
+    logic.push()
 
 if __name__ == "__main__":
     cli()

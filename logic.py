@@ -2,6 +2,8 @@ import os
 import shutil
 import uuid
 from datetime import datetime
+import api_client
+
 
 WIT_DIR = ".wit"
 STAGING_DIR = os.path.join(WIT_DIR, "staging")
@@ -141,3 +143,67 @@ def checkout(commit_id):
             shutil.copy2(src_item, item)
 
     print(f"Switched to commit {commit_id}.")
+
+
+def push():
+    if not os.path.exists(COMMITS_DIR) or not os.listdir(COMMITS_DIR):
+        print("Error: No commits found to push. Please run 'wit commit' first.")
+        return
+
+    # מוצאים את הקומיט האחרון
+    all_commits = [d for d in os.listdir(COMMITS_DIR) if os.path.isdir(os.path.join(COMMITS_DIR, d))]
+    latest_commit = max(all_commits, key=lambda d: os.path.getmtime(os.path.join(COMMITS_DIR, d)))
+    commit_path = os.path.join(COMMITS_DIR, latest_commit)
+
+    print(f"Pushing latest commit [{latest_commit}] to CodeGuard server...")
+
+    # אוספים את הקבצים מהדיסק
+    files_to_send = []
+    opened_files = []
+    for root, _, files in os.walk(commit_path):
+        for file in files:
+            if file.endswith(".py"):
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, commit_path)
+                f = open(full_path, "rb")
+                opened_files.append(f)
+                files_to_send.append(('files', (rel_path, f, 'text/plain')))
+
+    if not files_to_send:
+        print("No Python files found in this commit to analyze.")
+        return
+
+    try:
+        #  קריאה לשכבת הרשת החיצונית
+        result = api_client.send_files_for_analysis(files_to_send)
+
+        # הדפסת הדו"ח (הצגת המידע למשתמש)
+        if result:
+            issues = result.get("issues", [])
+            if not issues:
+                print("SUCCESS: No code quality issues found! Push approved.")
+            else:
+                print(f"⚠️ WARNING: Found {len(issues)} code quality issues in your files:\n")
+                for issue in issues:
+                    print(f" 📂 [{issue['file']}] | 🔴 {issue['type']} -> {issue['message']}\n")
+    finally:
+        for f in opened_files:
+            f.close()
+
+    # פתיחה מחדש של הקבצים כי הם כבר נקראו
+    files_to_send_again = []
+    opened_files_2 = []
+    for root, _, files in os.walk(commit_path):
+        for file in files:
+            if file.endswith(".py"):
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, commit_path)
+                f = open(full_path, "rb")
+                opened_files_2.append(f)
+                files_to_send_again.append(('files', (rel_path, f, 'text/plain')))
+
+    try:
+        api_client.send_files_for_graphs(files_to_send_again)
+    finally:
+        for f in opened_files_2:
+            f.close()
