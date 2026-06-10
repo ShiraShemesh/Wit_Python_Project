@@ -94,3 +94,8 @@ python wit.py checkout a1b2c3d4
 # Output: Switched to commit a1b2c3d4.
 
 Developed by Computer Science students (Tamar Rothen, Shira Shemesh, Ayla Samson) - 2nd year😀.
+
+ uvicorn main:app --reload 
+  python -m venv venv
+ venv\Scripts\activate
+ pip install -r requirements.txt
