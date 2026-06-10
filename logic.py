@@ -31,15 +31,32 @@ def add(path):
         print("Error: Not a WIT repository. Run 'init' first.")
         return
 
-    ignore_list = get_ignore_list()
+    if path != "." and not os.path.exists(path):
+        print(f"Error: '{path}' does not exist.")
+        return
+
+    ignore_list = set(get_ignore_list())
+
+    system_dirs = {
+        ".git",
+        ".wit",
+        "venv",
+        ".venv",
+        "__pycache__"
+    }
 
     def add_to_staging(src):
-        if os.path.basename(src) in ignore_list:
+        name = os.path.basename(src)
+
+        if name in ignore_list or name in system_dirs:
             return
-        target = os.path.join(STAGING_DIR, src)
+
+        rel_path = os.path.relpath(src)
+        target = os.path.join(STAGING_DIR, rel_path)
+
         if os.path.isdir(src):
-            if not os.path.exists(target):
-                os.makedirs(target)
+            os.makedirs(target, exist_ok=True)
+
             for item in os.listdir(src):
                 add_to_staging(os.path.join(src, item))
         else:
@@ -51,6 +68,7 @@ def add(path):
             add_to_staging(item)
     else:
         add_to_staging(path)
+
     print(f"Added {path} to staging area.")
 
 def commit(message="No message provided"):
@@ -145,65 +163,91 @@ def checkout(commit_id):
     print(f"Switched to commit {commit_id}.")
 
 
-def push():
-    if not os.path.exists(COMMITS_DIR) or not os.listdir(COMMITS_DIR):
-        print("Error: No commits found to push. Please run 'wit commit' first.")
-        return
-
-    # מוצאים את הקומיט האחרון
-    all_commits = [d for d in os.listdir(COMMITS_DIR) if os.path.isdir(os.path.join(COMMITS_DIR, d))]
-    latest_commit = max(all_commits, key=lambda d: os.path.getmtime(os.path.join(COMMITS_DIR, d)))
-    commit_path = os.path.join(COMMITS_DIR, latest_commit)
-
-    print(f"Pushing latest commit [{latest_commit}] to CodeGuard server...")
-
-    # אוספים את הקבצים מהדיסק
+def collect_python_files(commit_path):
     files_to_send = []
     opened_files = []
+
     for root, _, files in os.walk(commit_path):
         for file in files:
             if file.endswith(".py"):
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, commit_path)
+
                 f = open(full_path, "rb")
                 opened_files.append(f)
-                files_to_send.append(('files', (rel_path, f, 'text/plain')))
+
+                files_to_send.append(
+                    ("files", (rel_path, f, "text/x-python"))
+                )
+
+    return files_to_send, opened_files
+
+
+def push():
+    if not os.path.exists(COMMITS_DIR) or not os.listdir(COMMITS_DIR):
+        print("Error: No commits found to push. Please run 'wit commit' first.")
+        return
+
+    all_commits = [
+        d for d in os.listdir(COMMITS_DIR)
+        if os.path.isdir(os.path.join(COMMITS_DIR, d))
+    ]
+
+    latest_commit = max(
+        all_commits,
+        key=lambda d: os.path.getmtime(
+            os.path.join(COMMITS_DIR, d)
+        )
+    )
+
+    commit_path = os.path.join(COMMITS_DIR, latest_commit)
+
+    print(f"Pushing latest commit [{latest_commit}] to CodeGuard server...")
+
+   # ניתוח קוד
+    files_to_send, opened_files = collect_python_files(commit_path)
 
     if not files_to_send:
         print("No Python files found in this commit to analyze.")
         return
 
     try:
-        #  קריאה לשכבת הרשת החיצונית
-        result = api_client.send_files_for_analysis(files_to_send)
+        try:
+            result = api_client.send_files_for_analysis(files_to_send)
+        except Exception as e:
+            print(f"Failed to analyze files: {e}")
+            return
 
-        # הדפסת הדו"ח (הצגת המידע למשתמש)
-        if result:
-            issues = result.get("issues", [])
-            if not issues:
-                print("SUCCESS: No code quality issues found! Push approved.")
-            else:
-                print(f"⚠️ WARNING: Found {len(issues)} code quality issues in your files:\n")
-                for issue in issues:
-                    print(f" 📂 [{issue['file']}] | 🔴 {issue['type']} -> {issue['message']}\n")
+        issues = result.get("issues", [])
+
+        if not issues:
+            print("SUCCESS: No code quality issues found! Push approved.")
+        else:
+            print(
+                f"⚠️ WARNING: Found {len(issues)} code quality issues:\n"
+            )
+
+            for issue in issues:
+                print(
+                    f"📂 [{issue['file']}] | "
+                    f"🔴 {issue['type']} -> "
+                    f"{issue['message']}\n"
+                )
+
     finally:
         for f in opened_files:
             f.close()
 
-    # פתיחה מחדש של הקבצים כי הם כבר נקראו
-    files_to_send_again = []
-    opened_files_2 = []
-    for root, _, files in os.walk(commit_path):
-        for file in files:
-            if file.endswith(".py"):
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, commit_path)
-                f = open(full_path, "rb")
-                opened_files_2.append(f)
-                files_to_send_again.append(('files', (rel_path, f, 'text/plain')))
+    # יצירת גרף
+    files_to_send, opened_files = collect_python_files(commit_path)
 
     try:
-        api_client.send_files_for_graphs(files_to_send_again)
+        try:
+            api_client.send_files_for_graphs(files_to_send)
+        except Exception as e:
+            print(f"Failed to generate graphs: {e}")
+
     finally:
-        for f in opened_files_2:
+        for f in opened_files:
             f.close()
+
